@@ -1,0 +1,19 @@
+{
+    "tino_category": "Category",
+    "tino_product": "Product",
+    "tino_cycle": "Billing Cycle",
+    "tino_promocode": "Promotion Code",
+    "tino_affiliate": "Affiliate ID",
+    "tino_reload_cache": "Reload catalog",
+    "tino_reload_hint": "Products are cached; click to refresh from Tino.",
+    "tino_select": "- select -",
+    "tino_select_category": "- select category -",
+    "tino_select_product": "- select product -",
+    "tino_select_cycle": "- select cycle -",
+    "tino_no_options": "- no options available -",
+    "tino_out_of_stock": "out of stock",
+    "tino_err_no_product": "No Tino product selected in the product configuration",
+    "tino_err_no_service": "Tino service id not found",
+    "tino_err_credentials": "Tino API credentials are not configured on the server",
+    "tino_err_already_provisioned": "Service already provisioned; terminate it before re-provisioning"
+}
