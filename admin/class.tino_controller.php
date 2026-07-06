@@ -3,12 +3,10 @@
 /**
  * Admin controller for the Tino module.
  *
- * Serves the dynamic product-configuration UI. HostBill routes admin AJAX to
- * `?cmd=tino&action=<publicMethod>`; the config UI uses `action=productdetails`.
+ * HostBill routes admin AJAX to `?cmd=tino&action=<publicMethod>`.
  *
- * Follows the Proxmox2 convention:
- *   - $this->module    : the Tino module instance (auto-injected by core)
- *   - $this->template  : Smarty template engine (from HBController)
+ *   - productdetails            renders the product-config page (customconfig)
+ *   - updatecache               (AJAX) refresh the catalog and return it as JSON
  */
 class Tino_controller extends HBController
 {
@@ -16,165 +14,106 @@ class Tino_controller extends HBController
     var $module;
 
     /**
-     * Entry point for the product-config UI (AJAX).
-     *
-     * Dispatches on $params['make']:
-     *   - (default)     render the full product-config page
-     *   - getonappval   render one dynamic <select> (category/product/cycle)
-     *   - reloadcache   clear cached catalog data, then re-render the select
+     * Render the product-config page. HostBill includes the template assigned
+     * to `customconfig` into the surrounding config form.
      *
      * @param array $params
      */
     public function productdetails($params)
     {
-        // Connect to the selected server so the module can call the Tino API.
-        if (!empty($params['server_id'])) {
-            $servers = HBLoader::LoadModel('Servers');
-            $this->module->connect($servers->getServerDetails($params['server_id']));
-        }
-
         $tplDir = APPDIR_MODULES . 'Hosting' . DS . 'tino' . DS . 'templates' . DS;
-        $this->template->assign('product_tpl_dir', $tplDir);
 
-        $make = isset($params['make']) ? $params['make'] : '';
+        $default = $this->savedOptionValues($params);
 
-        switch ($make) {
-            case 'reloadcache':
-                $this->module->clearCatalogCache();
-                $this->product_values($params, true);
-                break;
-
-            case 'getonappval':
-                $this->product_values($params);
-                break;
-
-            default:
-                // Full config page. Saved option values are exposed as $default.
-                $this->template->assign('customconfig', $tplDir . 'myproductconfig.tpl');
-                $this->template->assign('default', $this->savedOptionValues($params));
-                $this->template->assign('server_id', isset($params['server_id']) ? $params['server_id'] : '');
-                return;
+        // Populate the selects from cache (no API call) so saved ids map to
+        // their labels on page load. Requires connecting to the server for the
+        // correct cache scope.
+        $categories = [];
+        $products   = [];
+        $forms      = [];
+        if (!empty($params['server_id'])) {
+            try {
+                $servers = HBLoader::LoadModel('Servers');
+                $this->module->connect($servers->getServerDetails($params['server_id']));
+                $categories = $this->module->getCachedCategoryOptions();
+                $catId      = (int) (isset($default['Category']) ? $default['Category'] : 0);
+                if ($catId > 0) {
+                    $products = $this->module->getCachedProductOptions($catId);
+                }
+                // Custom form fields of the selected product (SSH Key, OS Template...)
+                $productId = (int) (isset($default['Product']) ? $default['Product'] : 0);
+                if ($productId > 0) {
+                    $forms = $this->module->getProductForms($productId);
+                }
+            } catch (\Exception $ex) {
+                // ignore — selects fall back to the raw saved id + Load button
+            }
         }
 
-        // Dynamic select fragment.
-        $this->template->assign('make', $make);
-        $this->template->render($tplDir . 'ajax.myproductconfig.tpl');
+        $this->template->assign('customconfig', $tplDir . 'myproductconfig.tpl');
+        $this->template->assign('default', $default);
+        $this->template->assign('tino_categories', $categories);
+        $this->template->assign('tino_products', $products);
+        $this->template->assign('tino_forms', $forms);
+        $this->template->assign('server_id', isset($params['server_id']) ? $params['server_id'] : '');
     }
 
     /**
-     * Render one dynamic select based on $params['opt'].
+     * AJAX: load one list from the Tino API (force refresh) and return it as
+     * JSON. One button per row:
+     *   opt=Category -> all categories
+     *   opt=Product  -> products of the selected category (param `category`)
      *
-     * Assigns the AJAX template contract:
-     *   - valx      : the option key being rendered
-     *   - defval    : currently saved value (to mark selected)
-     *   - modvalues : normalized [id => ['id','label','selected']]
+     * The billing cycle is chosen by the end client at order time, so it is not
+     * configured here.
      *
      * @param array $params
-     * @param bool  $force Force refresh from API (bypass cache)
      */
-    protected function product_values($params, $force = false)
+    public function updatecache($params)
     {
-        if (($params['id'] ?? '') === 'new') {
-            Engine::addError('Please save your product first');
-            return;
+        header('Content-Type: application/json');
+
+        $result = ['ok' => false, 'error' => '', 'items' => []];
+
+        if (empty($params['server_id'])) {
+            $result['error'] = 'No server selected';
+            echo json_encode($result);
+            die();
         }
-        if (empty($params['opt'])) {
-            return;
-        }
 
-        $opt    = $params['opt'];
-        $defVal = $this->currentOptionValue($params, $opt);
-
-        // Sibling option values needed for dependent selects (product depends
-        // on category, cycle depends on product).
-        $siblings   = isset($params['options']) && is_array($params['options']) ? $params['options'] : [];
-        $categoryId = (int) ($siblings[Tino::O_CATEGORY_ID] ?? 0);
-        $productId  = (int) ($siblings[Tino::O_PRODUCT_ID] ?? 0);
-
-        $this->template->assign('valx', $opt);
-        $this->template->assign('defval', $defVal);
-
-        // Fetch fails soft: an API/credential problem renders an empty select
-        // (with the error surfaced) instead of breaking the whole config page.
-        $rows = [];
         try {
+            $servers = HBLoader::LoadModel('Servers');
+            $this->module->connect($servers->getServerDetails($params['server_id']));
+
+            $opt = isset($params['opt']) ? $params['opt'] : '';
             switch ($opt) {
-                case Tino::O_CATEGORY_ID:
-                    $rows = $this->module->getCategoryOptions($force);
+                case 'Category':
+                    $result['items'] = $this->module->getCategoryOptions(true);
                     break;
 
-                case Tino::O_PRODUCT_ID:
-                    $rows = $this->module->getProductOptions($categoryId, $force);
+                case 'Product':
+                    $categoryId = (int) ($params['category'] ?? 0);
+                    if ($categoryId <= 0) {
+                        throw new \RuntimeException('Please select a category first');
+                    }
+                    $result['items'] = $this->module->getProductOptions($categoryId, true);
                     break;
 
-                case Tino::O_CYCLE:
-                    $rows = $this->module->getCycleOptions($productId);
-                    break;
+                default:
+                    throw new \RuntimeException('Unknown option: ' . $opt);
             }
+
+            $result['ok'] = true;
         } catch (\Exception $ex) {
-            Engine::addError('Tino: ' . $ex->getMessage());
+            $result['error'] = $ex->getMessage();
         }
 
-        $this->template->assign('modvalues', $this->normalize($rows, $defVal));
+        echo json_encode($result);
+        die();
     }
 
     /**
-     * Normalize select rows into the template contract, marking the saved value
-     * as selected. Preserves saved-but-missing values (prefixed with '*').
-     *
-     * @param array $rows   [['id','label'], ...]
-     * @param mixed $defVal Currently saved value
-     * @return array [id => ['id','label','selected']]
-     */
-    protected function normalize(array $rows, $defVal)
-    {
-        $list = [];
-        foreach ($rows as $row) {
-            if (!isset($row['id'])) {
-                continue;
-            }
-            $id        = (string) $row['id'];
-            $list[$id] = [
-                'id'       => $row['id'],
-                'label'    => isset($row['label']) ? $row['label'] : $row['id'],
-                'selected' => ((string) $defVal === $id),
-            ];
-        }
-
-        // Keep a saved value that no longer exists in the catalog.
-        if ($defVal !== '' && $defVal !== null && !isset($list[(string) $defVal])) {
-            $list[(string) $defVal] = [
-                'id'       => $defVal,
-                'label'    => '*' . $defVal,
-                'selected' => true,
-            ];
-        }
-
-        return $list;
-    }
-
-    /**
-     * Resolve the currently saved value for a single option.
-     *
-     * @param array  $params
-     * @param string $opt
-     * @return string
-     */
-    protected function currentOptionValue($params, $opt)
-    {
-        if (isset($params['options'][$opt])) {
-            $val = $params['options'][$opt];
-            return is_array($val) ? (string) reset($val) : (string) $val;
-        }
-        if (isset($params[$opt])) {
-            $val = $params[$opt];
-            return is_array($val) ? (string) reset($val) : (string) $val;
-        }
-        return '';
-    }
-
-    /**
-     * Collect saved option values for the full-page render, keyed by option key.
+     * Collect saved option values for the page render, keyed by option key.
      *
      * @param array $params
      * @return array

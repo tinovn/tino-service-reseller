@@ -317,6 +317,42 @@ class Tino
     }
 
     /**
+     * Read a cached list WITHOUT calling the API (used to render saved values on
+     * page load so ids map to labels; returns [] on a cache miss).
+     *
+     * @param string $suffix
+     * @return array
+     */
+    public function getCachedList($suffix)
+    {
+        if (!class_exists('\\HBCache')) {
+            return [];
+        }
+        try {
+            $hit = \HBCache::get($this->cacheKey($suffix));
+            return is_array($hit) ? $hit : [];
+        } catch (\Exception $ex) {
+            return [];
+        }
+    }
+
+    /** @return array Cached category rows (no API call). */
+    public function getCachedCategoryOptions()
+    {
+        return $this->getCachedList('categories');
+    }
+
+    /**
+     * @param int $categoryId
+     * @return array Cached product rows for a category (no API call).
+     */
+    public function getCachedProductOptions($categoryId)
+    {
+        $categoryId = (int) $categoryId;
+        return $categoryId > 0 ? $this->getCachedList('products.' . $categoryId) : [];
+    }
+
+    /**
      * Categories as a flat select list [['id','label'], ...], including nested
      * subcategories (indented). Cached.
      *
@@ -435,6 +471,73 @@ class Tino
         return [];
     }
 
+    /**
+     * Custom form fields of a Tino product (config.forms), normalized for the
+     * admin UI and for building HostBill config fields.
+     *
+     * Each returned entry:
+     *   [
+     *     'form_id'  => '1736',
+     *     'variable' => 'tino_form_1736',      // key linking option/config-field
+     *     'type'     => 'select' | 'sshkeyselect' | 'input' | ...,
+     *     'title'    => 'OS Template',
+     *     'name'     => 'custom[1736]',         // the API field name for ordering
+     *     'required' => bool,
+     *     'items'    => [ ['id'=>..,'label'=>..], ... ],   // for selectable types
+     *   ]
+     *
+     * @param int $productId
+     * @return array
+     */
+    public function getProductForms($productId)
+    {
+        $productId = (int) $productId;
+        if ($productId <= 0) {
+            return [];
+        }
+
+        try {
+            $cfg   = $this->getApi()->getProductConfig($productId);
+            $forms = isset($cfg['product']['config']['forms'])
+                ? $cfg['product']['config']['forms']
+                : [];
+        } catch (\Exception $ex) {
+            $this->addError('Failed to load product forms: ' . $ex->getMessage());
+            return [];
+        }
+
+        $out = [];
+        foreach ($forms as $form) {
+            if (empty($form['id'])) {
+                continue;
+            }
+
+            $items = [];
+            if (!empty($form['items']) && is_array($form['items'])) {
+                foreach ($form['items'] as $it) {
+                    // Skip placeholder/empty items (e.g. the ssh-key blank row).
+                    if (!isset($it['value']) || $it['value'] === '') {
+                        continue;
+                    }
+                    $label = isset($it['title']) && $it['title'] !== '' ? $it['title'] : (string) $it['value'];
+                    $items[] = ['id' => $it['value'], 'label' => $label];
+                }
+            }
+
+            $out[] = [
+                'form_id'  => (string) $form['id'],
+                'variable' => 'tino_form_' . $form['id'],
+                'type'     => isset($form['type']) ? $form['type'] : 'input',
+                'title'    => isset($form['title']) ? $form['title'] : ('Field #' . $form['id']),
+                'name'     => isset($form['name']) ? $form['name'] : ('custom[' . $form['id'] . ']'),
+                'required' => !empty($form['required']),
+                'items'    => $items,
+            ];
+        }
+
+        return $out;
+    }
+
     // -------------------------------------------------------------------------
     // Helpers to read config/details
     // -------------------------------------------------------------------------
@@ -491,6 +594,35 @@ class Tino
     // -------------------------------------------------------------------------
 
     /**
+     * Map the HostBill billing cycle of the current service to a Tino cycle
+     * symbol (m=monthly, q=quarterly, s=semi-annually, a=annually, b=biennially,
+     * t=triennially). Returns '' when it cannot be determined (order defaults it).
+     *
+     * @return string
+     */
+    protected function mapBillingCycle()
+    {
+        $cycle = '';
+        if (!empty($this->account_details['billingcycle'])) {
+            $cycle = $this->account_details['billingcycle'];
+        } elseif (!empty($this->billingcycle)) {
+            $cycle = $this->billingcycle;
+        }
+
+        $map = [
+            'Monthly'        => 'm',
+            'Quarterly'      => 'q',
+            'Semi-Annually'  => 's',
+            'Semiannually'   => 's',
+            'Annually'       => 'a',
+            'Biennially'     => 'b',
+            'Triennially'    => 't',
+        ];
+
+        return isset($map[$cycle]) ? $map[$cycle] : '';
+    }
+
+    /**
      * Create (order) a new Tino service.
      *
      * pay_method is intentionally not sent so HostBill/Tino settle from credit.
@@ -511,11 +643,9 @@ class Tino
             return false;
         }
 
-        $cycle = $this->getOption(self::O_CYCLE);
-        if (empty($cycle)) {
-            $this->addError('No billing cycle selected in the product configuration');
-            return false;
-        }
+        // The billing cycle comes from the service the client ordered (HostBill
+        // billing cycle), mapped to a Tino symbol.
+        $cycle = $this->mapBillingCycle();
 
         try {
             $api    = $this->getApi();
@@ -532,10 +662,11 @@ class Tino
             }
 
             $params = [
-                'cycle'     => $cycle,
                 'promocode' => $this->getOption(self::O_PROMOCODE),
-                'aff_id'    => $this->getOption(self::O_AFF_ID),
             ];
+            if (!empty($cycle)) {
+                $params['cycle'] = $cycle;
+            }
             if (!empty($domain)) {
                 $params['domain'] = $domain;
             }

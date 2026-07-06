@@ -1,90 +1,74 @@
 /*
  * Tino module — product configuration JS.
  *
- * Populates the Category / Product / Cycle selects from the Tino API
- * (?cmd=tino&action=productdetails).
+ * Each row has a "Load" button that fetches its list from the Tino API and
+ * caches it (?cmd=tino&action=updatecache&opt=...). Event delegation on
+ * document only — no work runs on load, so nothing races the HostBill tab UI.
  *
- * Design constraints (learned the hard way):
- *  - NEVER run AJAX or touch the DOM on load. Eager work races the HostBill
- *    tab engine and freezes tab switching.
- *  - Use event delegation bound once on `document`, so we never depend on the
- *    config markup existing at load time and never interfere with core init.
- *  - Wrap everything so a failure here can never break HostBill's own scripts.
+ *   Category button -> load all categories
+ *   Product  button -> load products of the selected category
  */
 (function ($) {
     'use strict';
-
     if (!$) { return; }
 
+    // The selected App Connection is the HostBill server picker: a checked
+    // checkbox in #serv_picker (same source proxmox2 uses).
     function serverId() {
-        return $('.tino-product-config').attr('data-server-id') || '';
+        return $('#serv_picker input[type=checkbox][name]:checked:eq(0)').val() || '';
     }
 
-    function productId() {
-        var el = $('input[name="id"]').filter('[value]').eq(0);
+    function val(id) {
+        var el = $('#' + id);
         return el.length ? el.val() : '';
     }
 
-    // Current values of every Tino option (so dependent selects resolve).
-    function currentOptions() {
-        var opts = {};
-        $('.tino-product-config').find('[name^="options["]').each(function () {
-            var name = $(this).attr('name') || '';
-            var m = /^options\[(.+)\]$/.exec(name);
-            if (m) { opts[m[1]] = $(this).val(); }
+    // Replace a select's options with the fetched list, keeping current value.
+    function fill(id, items) {
+        var $sel = $('#' + id);
+        if (!$sel.length) { return; }
+        var current = $sel.val();
+        var html = '<option value="">- select ' + id.toLowerCase() + ' -</option>';
+        $.each(items || [], function (i, it) {
+            var sel = (String(it.id) === String(current)) ? ' selected="selected"' : '';
+            html += '<option value="' + it.id + '"' + sel + '>' + it.label + '</option>';
         });
-        return opts;
+        $sel.html(html);
     }
 
-    // Fetch one dynamic select into its container. Returns a jQuery promise.
-    function loadSelect(opt, make) {
-        var $container = $('.tino-fetch[data-opt="' + opt + '"]');
-        if (!$container.length || !productId()) {
-            return $.Deferred().resolve().promise();
+    function loadRow(opt, $btn) {
+        var sid = serverId();
+        if (!sid) {
+            alert('Tino: please select an App Connection (server) first');
+            return;
         }
-        $container.addClass('tino-loading');
-        return $.post('?cmd=tino&action=productdetails', {
-            id: productId(),
-            server_id: serverId(),
-            opt: opt,
-            make: make || 'getonappval',
-            options: currentOptions()
-        }).done(function (html) {
-            if (typeof html === 'string' && html.indexOf('<select') !== -1) {
-                $container.html(html);
-            }
-        }).always(function () {
-            $container.removeClass('tino-loading');
-        });
-    }
+        var data = { server_id: sid, opt: opt };
+        if (opt === 'Product') {
+            data.category = val('Category');
+        }
 
-    // Fetch a dependent chain (each step waits for the previous).
-    function reloadChain(startOpt, make) {
-        if (startOpt === 'Category') {
-            loadSelect('Category', make).done(function () {
-                loadSelect('Product', make).done(function () {
-                    loadSelect('Cycle', make);
-                });
+        var label = $btn.html();
+        $btn.prop('disabled', true).html('…');
+
+        $.post('?cmd=tino&action=updatecache', data, null, 'json')
+            .done(function (res) {
+                if (res && res.ok) {
+                    fill(opt, res.items);
+                } else {
+                    alert('Tino: ' + ((res && res.error) || 'failed to load'));
+                }
+            })
+            .fail(function () {
+                alert('Tino: request failed');
+            })
+            .always(function () {
+                $btn.prop('disabled', false).html(label);
             });
-        } else if (startOpt === 'Product') {
-            loadSelect('Product').done(function () { loadSelect('Cycle'); });
-        } else if (startOpt === 'Cycle') {
-            loadSelect('Cycle');
-        }
     }
 
-    // Delegated handlers bound once on document — no DOM work happens on load,
-    // so nothing races the HostBill tab engine.
-    $(document)
-        .on('change.tino', '.tino-product-config #Category', function () {
-            reloadChain('Product');
-        })
-        .on('change.tino', '.tino-product-config #Product', function () {
-            reloadChain('Cycle');
-        })
-        .on('click.tino', '.tino-product-config .tino-reload-cache', function (e) {
-            e.preventDefault();
-            reloadChain('Category', 'reloadcache');
-        });
+    $(document).on('click.tino', '.tino-product-config .tino-load', function (e) {
+        e.preventDefault();
+        loadRow($(this).attr('data-opt'), $(this));
+    });
 
 })(window.jQuery);
