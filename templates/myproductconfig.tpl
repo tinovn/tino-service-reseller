@@ -64,9 +64,9 @@
 
     <div class="form-group">
         <button type="button" class="btn btn-default tino-reload-cache">
-            &#8635; Reload catalog
+            &#8635; Load / Reload catalog
         </button>
-        <small class="tino-hint">Products are cached; click to refresh from Tino.</small>
+        <small class="tino-hint">Click to load the product list from Tino (cached; click again to refresh).</small>
     </div>
 
 </div>
@@ -74,3 +74,4 @@
 <script type="text/javascript">
     var TINO_SERVER_ID = '{$server_id|default:''|escape:'javascript'}';
 </script>
+<script type="text/javascript" src="../includes/modules/Hosting/tino/templates/js/product.js"></script>
