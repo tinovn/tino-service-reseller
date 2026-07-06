@@ -30,6 +30,7 @@ class Tino_controller extends HBController
         // correct cache scope.
         $categories = [];
         $products   = [];
+        $forms      = [];
         if (!empty($params['server_id'])) {
             try {
                 $servers = HBLoader::LoadModel('Servers');
@@ -38,6 +39,12 @@ class Tino_controller extends HBController
                 $catId      = (int) (isset($default['Category']) ? $default['Category'] : 0);
                 if ($catId > 0) {
                     $products = $this->module->getCachedProductOptions($catId);
+                }
+                // Render the product's form fields from cache so saved state
+                // (defaults + config fields) shows without clicking Load.
+                $productId = (int) (isset($default['Product']) ? $default['Product'] : 0);
+                if ($productId > 0) {
+                    $forms = $this->module->getCachedProductForms($productId);
                 }
             } catch (\Exception $ex) {
                 // ignore — selects fall back to the raw saved id + Load button
@@ -48,6 +55,7 @@ class Tino_controller extends HBController
         $this->template->assign('default', $default);
         $this->template->assign('tino_categories', $categories);
         $this->template->assign('tino_products', $products);
+        $this->template->assign('tino_forms', $forms);
         $this->template->assign('server_id', isset($params['server_id']) ? $params['server_id'] : '');
     }
 
@@ -97,7 +105,8 @@ class Tino_controller extends HBController
                     if ($productId <= 0) {
                         throw new \RuntimeException('Please select a product first');
                     }
-                    $result['forms'] = $this->module->getProductForms($productId);
+                    // Reload button forces a fresh fetch and refreshes the cache.
+                    $result['forms'] = $this->module->getProductForms($productId, true);
                     break;
 
                 default:

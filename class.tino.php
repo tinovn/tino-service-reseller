@@ -78,18 +78,7 @@ class Tino
             'loadable' => 'getProductOptions',
             'variable' => 'tino_product',
         ],
-        self::O_CYCLE => [
-            'type'     => 'select',
-            'default'  => [''],
-            'value'    => [''],
-            'loadable' => 'getCycleOptions',
-            'variable' => 'tino_cycle',
-        ],
         self::O_PROMOCODE => [
-            'type'    => 'input',
-            'default' => '',
-        ],
-        self::O_AFF_ID => [
             'type'    => 'input',
             'default' => '',
         ],
@@ -486,16 +475,39 @@ class Tino
      *     'items'    => [ ['id'=>..,'label'=>..], ... ],   // for selectable types
      *   ]
      *
-     * @param int $productId
+     * Cached per product (force refresh with $force = true).
+     *
+     * @param int  $productId
+     * @param bool $force
      * @return array
      */
-    public function getProductForms($productId)
+    public function getProductForms($productId, $force = false)
     {
         $productId = (int) $productId;
         if ($productId <= 0) {
             return [];
         }
 
+        return $this->cached('forms.' . $productId, function () use ($productId) {
+            return $this->buildProductForms($productId);
+        }, $force);
+    }
+
+    /** @return array Cached product forms (no API call). */
+    public function getCachedProductForms($productId)
+    {
+        $productId = (int) $productId;
+        return $productId > 0 ? $this->getCachedList('forms.' . $productId) : [];
+    }
+
+    /**
+     * Fetch + normalize a product's form fields from the API (no caching).
+     *
+     * @param int $productId
+     * @return array
+     */
+    protected function buildProductForms($productId)
+    {
         try {
             $cfg   = $this->getApi()->getProductConfig($productId);
             $forms = isset($cfg['product']['config']['forms'])
@@ -597,6 +609,47 @@ class Tino
     // -------------------------------------------------------------------------
 
     /**
+     * Build the `custom` payload for an order/upgrade from the product's form
+     * fields. For each form:
+     *   - if the client was allowed to choose, a config field (variable
+     *     `tino_form_<id>`) holds the client's value, read via resource();
+     *   - otherwise the admin default saved under option[variable] is used.
+     *
+     * Result is keyed by the Tino form id: custom[<form_id>] = <value>.
+     *
+     * @param int $productId
+     * @return array
+     */
+    protected function buildCustomFields($productId)
+    {
+        $forms  = $this->getCachedProductForms($productId);
+        if (empty($forms)) {
+            $forms = $this->getProductForms($productId);
+        }
+
+        $custom = [];
+        foreach ($forms as $form) {
+            $variable = $form['variable'];
+
+            // Client-chosen value (config field) takes priority; fall back to the
+            // admin default option value.
+            $value = '';
+            if (method_exists($this, 'resource')) {
+                $value = $this->resource($variable);
+            }
+            if ($value === '' || $value === null || $value === false) {
+                $value = $this->getOption($variable);
+            }
+
+            if ($value !== '' && $value !== null && $value !== false) {
+                $custom[$form['form_id']] = $value;
+            }
+        }
+
+        return $custom;
+    }
+
+    /**
      * Map the HostBill billing cycle of the current service to a Tino cycle
      * symbol (m=monthly, q=quarterly, s=semi-annually, a=annually, b=biennially,
      * t=triennially). Returns '' when it cannot be determined (order defaults it).
@@ -672,6 +725,10 @@ class Tino
             }
             if (!empty($domain)) {
                 $params['domain'] = $domain;
+            }
+            $custom = $this->buildCustomFields($productId);
+            if (!empty($custom)) {
+                $params['custom'] = $custom;
             }
 
             $res = $api->order($productId, $params);
@@ -866,13 +923,15 @@ class Tino
         }
 
         $newProductId = (int) $this->getOption(self::O_PRODUCT_ID);
-        $newCycle     = $this->getOption(self::O_CYCLE);
+        $newCycle     = $this->mapBillingCycle();
+        $resources    = $this->buildCustomFields($newProductId);
 
         try {
             $this->getApi()->upgradeService(
                 $serviceId,
                 $newProductId > 0 ? $newProductId : null,
-                !empty($newCycle) ? $newCycle : null
+                !empty($newCycle) ? $newCycle : null,
+                $resources
             );
             return true;
         } catch (\Exception $ex) {

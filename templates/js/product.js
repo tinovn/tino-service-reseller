@@ -124,7 +124,37 @@
                 + '</div>';
         });
         $box.html(html);
+
+        // Reflect existing state: if HostBill already has a config field for a
+        // form (hidden #configvar_<variable>), mark client-choice as on.
+        var hbPid = productId();
+        $box.find('.tino-form-row').each(function () {
+            var $row = $(this);
+            var $cv = $('#configvar_' + $row.attr('data-variable'));
+            if ($cv.length) {
+                $row.find('.tino-formchecker').prop('checked', true);
+                $row.find('.tino-form-default').prop('disabled', true);
+                $row.find('.tino-form-link').html(
+                    ' <a href="#" class="editbtn" onclick="return editCustomFieldForm(\''
+                    + $cv.val() + '\',\'' + hbPid + '\')">Edit related form element</a>');
+            }
+        });
     }
+
+    // Render forms saved server-side (from cache) on page load, so admins don't
+    // have to click Reload each time.
+    function renderSavedForms() {
+        var $box = $('#tino-forms');
+        if (!$box.length) { return; }
+        var raw = $box.attr('data-forms');
+        if (!raw) { return; }
+        try {
+            var forms = JSON.parse(raw);
+            if (forms && forms.length) { renderForms(forms); }
+        } catch (e) { /* ignore malformed data */ }
+    }
+
+    $(renderSavedForms);
 
     // Tick "Allow client to choose" -> create a HostBill config field for this
     // form (via importformel), then show the "Edit related form element" link

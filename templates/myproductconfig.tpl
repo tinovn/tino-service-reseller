@@ -43,10 +43,10 @@
 
             <hr/>
             <div class="form-group">
-                <button type="button" class="btn btn-default tino-load-forms">&#8635; Load product options</button>
-                <small class="tino-hint">Load the selected product's custom fields (SSH Key, OS Template...).</small>
+                <button type="button" class="btn btn-default tino-load-forms">&#8635; Reload product options</button>
+                <small class="tino-hint">Reload the selected product's custom fields (SSH Key, OS Template...) from Tino.</small>
             </div>
-            <div id="tino-forms"></div>
+            <div id="tino-forms" data-forms="{if $tino_forms}{$tino_forms|@json_encode|escape}{else}[]{/if}"></div>
 
         </div>
 {literal}
