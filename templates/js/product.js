@@ -17,8 +17,7 @@
     if (!$) { return; }
 
     function serverId() {
-        return (typeof window.TINO_SERVER_ID !== 'undefined' && window.TINO_SERVER_ID)
-            ? window.TINO_SERVER_ID : '';
+        return $('.tino-product-config').attr('data-server-id') || '';
     }
 
     function productId() {
