@@ -41,27 +41,12 @@
                 <input type="text" name="options[Promocode]" id="Promocode" class="form-control" value="{$default.Promocode|default:''|escape}" />
             </div>
 
-            {if $tino_forms}
-                <hr/>
-                <h4>Product options (from Tino)</h4>
-                <p class="tino-hint">Tick a field to let your clients choose it during checkout.</p>
-                {foreach from=$tino_forms item=form}
-                    <div class="form-group tino-form-row" data-form-id="{$form.form_id|escape}" data-variable="{$form.variable|escape}">
-                        <label>
-                            {$form.title|escape}
-                            {if $form.required} <span style="color:#990000">*</span>{/if}
-                            <small style="color:#888">({$form.type|escape}{if $form.items} · {$form.items|@count} options{/if})</small>
-                        </label>
-                        <div>
-                            <label style="font-weight:normal">
-                                <input type="checkbox" class="tino-formchecker" rel="{$form.variable|escape}" />
-                                Allow client to choose during order
-                            </label>
-                            <span class="tino-form-link"></span>
-                        </div>
-                    </div>
-                {/foreach}
-            {/if}
+            <hr/>
+            <div class="form-group">
+                <button type="button" class="btn btn-default tino-load-forms">&#8635; Load product options</button>
+                <small class="tino-hint">Load the selected product's custom fields (SSH Key, OS Template...).</small>
+            </div>
+            <div id="tino-forms"></div>
 
         </div>
 {literal}

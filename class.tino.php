@@ -515,12 +515,15 @@ class Tino
             $items = [];
             if (!empty($form['items']) && is_array($form['items'])) {
                 foreach ($form['items'] as $it) {
-                    // Skip placeholder/empty items (e.g. the ssh-key blank row).
-                    if (!isset($it['value']) || $it['value'] === '') {
+                    // The selectable value is the item id; `value` is only set on
+                    // the pre-selected default. Skip rows without a usable id or
+                    // title (e.g. the ssh-key blank placeholder).
+                    $optId = isset($it['id']) ? $it['id'] : (isset($it['value']) ? $it['value'] : null);
+                    $label = isset($it['title']) ? trim($it['title']) : '';
+                    if ($optId === null || $optId === '' || $label === '') {
                         continue;
                     }
-                    $label = isset($it['title']) && $it['title'] !== '' ? $it['title'] : (string) $it['value'];
-                    $items[] = ['id' => $it['value'], 'label' => $label];
+                    $items[] = ['id' => $optId, 'label' => $label];
                 }
             }
 
